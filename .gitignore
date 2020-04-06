@@ -1,0 +1,6 @@
+## Gitignore
+
+/logs
+
+*.log
+*.txt

@@ -1,0 +1,196 @@
+#!/bin/bash
+
+#******************************************************************************
+# This script is used for collect unit sysdiagnose log under os mode
+#------------------------------------------------------------------------------
+# @Author: Cyril
+# @Create: 2020-03-18
+# @Tips: 1. To using this script, please closing nanokdp/nanocom terminal first.
+#       2. Please using kanzi-cable
+#       3. Only one unit could be plugged in station
+# @Usage: $ ./run_iboot_cmd.sh $probeName (such as:30F014)
+# @Copyright: FX-CoreOS
+#******************************************************************************
+#echo "|----------------------------------------------------------------------|"
+
+echo -e "\033[46;34m#======================================================================#\033[0m"
+echo -e "\033[46;34m| ------------------------- PanicTools V1.0 -------------------------- |\033[0m"
+echo -e "\033[46;34m| ScriptName: ./run_sysdiagnose_cmd                                    |\033[0m"
+echo -e "\033[46;34m| UsageTips: Please using only one Kanzi-cable plugged in station.     |\033[0m"
+echo -e "\033[46;34m#======================================================================#\033[0m"
+
+mkdir -p /tmp/panictools &> /dev/null
+tcprelay_log_path="/tmp/panictools/tcprelay.log"
+log_path="/tmp/panictools/run_sysdiagnose_cmd.log"
+echo "" > $log_path
+
+# Show stage start string
+showStart() {
+        stage_num=$1
+        stage_string=$2
+        
+        echo -e "\033[34;47;1m[Stage $stage_num]\033[34;47;0m $stage_string."
+}
+
+# Show stage result string by format
+# Need two arguments: stage number and exec_status number
+showResult() {
+        stage_num=$1
+        exec_stat=$2
+        
+        if(($exec_stat==0));then
+        #       echo -e "\033[49;34;1m[Stage $stage_num]\033[49;34;0m \033[49;32;1mDone\033[49;32;0m"
+                echo -e "\033[49;32;1mDone\033[49;32;0m"
+                return 0
+        else    
+		echo -e "\033[31;49;1mFail\033[31;49;0m"
+                exit 9
+        fi
+}
+
+# Get all units locationId and mode(except Diags mode) which have connected to station
+getLocIDAndMode() {
+
+    get_SPUSBData=`/usr/sbin/system_profiler SPUSBDataType | egrep "DCSD USB UART:|Kanzi:|iPhone|Serial Number:*|Location ID:*|Apple Mobile Device*"`
+    get_SPUSBData="$get_SPUSBData"
+
+    py_cmd="""
+import re, commands
+pattern_cable_name = \"Serial Number: ([a-zA-Z0-9]+)\"
+pattern_cable_locid = \"Location ID: ([a-zA-Z0-9]+)\"
+pattern_unitsn_recovery = \"SRNM:\[([a-zA-Z0-9]+)\]\"
+
+status, info_arr = commands.getstatusoutput('/usr/sbin/system_profiler SPUSBDataType | egrep \"DCSD USB UART:|Kanzi:|iPhone|Serial Number:*|Location ID:*|Apple Mobile Device*\"')
+
+info_arr = info_arr.split(\"\n\")
+for i in range(len(info_arr)):
+	a = (
+		re.search(\"iPhone:\", info_arr[i]),		  # OS mode
+		re.search(\"Apple Mobile Device \(Recovery Mode\):\", info_arr[i]), # Recovery mode
+		re.search(\"Apple Mobile Device \(DFU Mode\):\", info_arr[i]))	  # DFU mode
+
+	if a[0] or a[1] or a[2]:
+		if a[0]:
+			mode = \"iOS\"
+		elif a[1]:
+			mode = \"Recovery\"
+		elif a[2]:
+			mode = \"DFU\"
+		else:
+			pass
+
+		try:
+			cable_name = re.search(pattern_cable_name, info_arr[i - 2]).group().split(\":\")[1].strip()
+			loc_id = re.search(pattern_cable_locid, info_arr[i + 2]).group().split(\":\")[1].strip()
+			print(\"getLocIDAndMode: ProbeName={} LocationId={} Mode={}\".format(cable_name, loc_id, mode))
+		except Exception as e:
+			print(e)
+			exit(1)
+		else:
+			if a[2]:	# Recovery模式下读取SN
+				g = re.search(pattern_unitsn_recovery, info_arr[i + 1])
+				if g:
+					unit_sn = g.group()[6:-1]
+					print(\"UnitSN={}\".format(unit_sn))
+			exit(0)
+"""
+
+	res=`python -c "$py_cmd"`
+	if ((`echo $res | grep getLocIDAndMode >>/dev/null ; echo $?`==0));then
+		echo $res;
+		return 0
+	else
+		return 1
+	fi
+}
+
+
+showStart 1 "Start tcprelay process"
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Stage 1
+#force_kill_tcprelay_cmd
+ps -ef | grep tcprelay | grep -v "grep" |grep -v "ssh scp" | awk -F ' ' '{print $2}' | xargs kill -9 >>$log_path
+
+# monitor_tcprelay_proc
+tcprelay_proc_num=$((`ps -ef | grep "tcprelay --portoffset 10000 873 23" | wc -l`-1))
+echo tcprelay_proc_num=$tcprelay_proc_num >> $log_path
+
+if [[ $tcprelay_proc_num > 0 ]];then 
+	echo "Tcprelay process is already running..."; 
+else 
+	echo "Start running a new tcprelay process"; 
+	# start_tcprelay_cmd
+	tcprelay --portoffset 10000 873 23 ssh scp & 
+	showResult 1 $?
+fi
+
+showResult 1 0
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Stage 1
+
+showStart 2 "Remoting and running sysdiagnose..."
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Stage 2
+exp_cmd="""
+spawn ./telnet localhost 10023
+set timeout 240
+expect -re \"Escape character\" { sleep 1; send \"\n\" }
+expect -re \"login:\" { send \"\nroot\n\" }
+expect -re \"assword:\" { send \"alpine\n\" }
+expect -re \"root#\" { send \"defaults write com.apple.sysdiagnose factoryDisable -bool FALSE\n\" }
+expect -re \"root#\" { send \"sysdiagnose\n\" }
+expect -re \"Press \'Enter\' to continue\" { send \"\r\n\" }
+expect {
+	-re \"tar.gz\" { exp_continue }
+	-re \"root#\" { send \"exit\n\" }
+	eof { exit 0 }
+}
+expect eof
+"""
+# /private/var/mobile/Library/Logs/CrashReporter/DiagnosticLogs/sysdiagnose/
+#sysdiagnose error: sysdiagnose already in flight
+
+expect -c "${exp_cmd}" >>$log_path
+#echo $exp_cmd_str >>$log_path
+
+## Shell 没办法提取完整路径，用python替代
+py_cmd="""
+import re
+data=\"\"
+with open(\"$log_path\", \"r\") as f:
+	data=f.read()
+try:
+	print (re.search(r\"/var(.*)tar.gz\", data).group())
+except:
+	print \"\"
+	exit (1)
+"""
+python -c "$py_cmd"
+sysdiagnose_log_path=`python -c "$py_cmd"`
+if(($?==0)) && ((`echo $sysdiagnose_log_path | grep tar.gz | wc -l`==1));then
+	echo "PASS: Running Sysdiagnose successful."
+	echo "Sysdiagnose path from unit: $sysdiagnose_log_path"
+	showResult 2 0
+else
+	echo -e "ERROR: Get Sysdiagnose \033[31;49;1mfailed\033[31;49;0m."
+	showResult 2 1
+fi
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Stage 2
+
+
+showStart 3 "Copying sysdiagnose from unit"
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Stage 3
+location_id=`getLocIDAndMode | grep LocationId | awk -F ' ' '{print $3}' | awk -F '=' '{print $2}'`
+if [[ $location_id != "" ]];then
+        mkdir logs/ ;
+        copyUnrestricted -u $location_id -s $sysdiagnose_log_path -t logs/ >>$log_path;
+#	scp -r root@localhost://$sysdiagnose_log_path logs/ >>$log_path;
+	showResult 3 $?
+else
+        echo -e "ERROR: Get locationid \033[31;49;1mfailed\033[31;49;0m."
+	showResult 3 1
+fi
+
+showStart 4 "Opening logs folder.."
+open logs/
+showResult 4 $?
+
+echo -e "\033[49;30;1mFinish!\033[49;30;0m"
