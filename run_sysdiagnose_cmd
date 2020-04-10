@@ -179,6 +179,7 @@ fi
 showStart 3 "Copying sysdiagnose from unit"
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Stage 3
 location_id=`getLocIDAndMode | grep LocationId | awk -F ' ' '{print $3}' | awk -F '=' '{print $2}'`
+#location_id=`getLocIDAndMode | grep LocationId | grep $noprefix_probeName| awk -F ' ' '{print $3}' | awk -F '=' '{print $2}'`
 if [[ $location_id != "" ]];then
         mkdir logs/ ;
         copyUnrestricted -u $location_id -s $sysdiagnose_log_path -t logs/ >>$log_path;

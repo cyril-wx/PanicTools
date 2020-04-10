@@ -44,6 +44,37 @@ showResult() {
 	fi
 }
 
+# Probe name exchange between nanokdp and astrisctl
+# prefixNameExchange kanzi-30EE71       ## nanokdp
+# prefixNameExchange KanziSWD-30EE71    ## astris
+prefixNameExchange() {
+
+        probeName=$1
+
+        if [[ $probeName =~ 'SWD-' ]];then
+                ## echo "Astris probe"
+                prefix=`echo $probeName | cut -d "-" -f1`
+                suffix=`echo $probeName | cut -d "-" -f2`
+                prefix=${prefix/SWD/}
+                prefix=`echo $prefix | tr '[A-Z]' '[a-z]'`
+                new_probe_name="$prefix-$suffix"
+
+                echo $new_probe_name
+
+        elif [[ $probeName =~ '-' ]];then
+                ## echo "Nanokdp probe"
+                prefix=`echo ${probeName:0:1} | tr '[a-z]' '[A-Z]'`
+                new_probe_name="${prefix}${probeName:1}"
+                new_probe_name=${new_probe_name/-/SWD-}
+
+                echo $new_probe_name
+        else
+                echo "ERROR: Unrecognized probe [$probeName]."
+                exit -1
+        fi
+
+}
+
 # Get all units locationId and mode(except Diags mode) which have connected to station
 getLocIDAndMode() {
 
@@ -112,7 +143,6 @@ else
         echo "Checking fail, probe_num=[$probeNum]. exit"
 	showResult 0 1
 fi
-probeName=`getLocIDAndMode | grep getLocIDAndMode | awk -F ' ' '{print $2}' | awk -F '=' '{print $2}'`
 
 showStart 1 "Rebooting unit..."
 if((`getLocIDAndMode | grep iOS >>$log_path; echo $?`==0));then
@@ -120,14 +150,17 @@ if((`getLocIDAndMode | grep iOS >>$log_path; echo $?`==0));then
 	showResult 1 0
 	## goto ios_tag
 else
-	astrisctl reset
+	astrisctl reset --force-kick --host localhost:$probeName 
 	sleep 3
 	showResult 1 $?
 
 showStart 2 "Waiting entering to Recovery..."
+# change probename from astrisctl to nanokdp type
+probeName=`prefixNameExchange $probeName`
+
 iboot_cmd_1="""
 set timeout 30
-spawn nanokdp -d /dev/cu.kanzi-$probeName -L $log_path
+spawn nanokdp -d /dev/cu.$probeName -L $log_path
 expect -re \"Use Ctrl\" { send \"\r\n\" ; sleep 2; send \"\r\n\" ; exp_continue } 
 expect -re \"nvme_init_controller DONE\" { send \"\r\n\r\n\" ; exp_continue } 
 expect -re \"]\" { send \"printenv\r\n\" }
@@ -152,7 +185,7 @@ echo "new_boot_args=$no_burnin_args"
 
 iboot_cmd_2="""
 set timeout 5
-spawn nanokdp -d /dev/cu.kanzi-$probeName -L $log_path
+spawn nanokdp -d /dev/cu.$probeName -L $log_path
 expect -re \"Use Ctrl\" { send \"\r\n\" ; sleep 1; send \"\r\n\";  }
 expect -re \"]\" { send \"setenv boot-args ${no_burnin_args} \r\n\" }
 expect -re \"]\" { send \"setenv auto-boot true \r\n\" }
