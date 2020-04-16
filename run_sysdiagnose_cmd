@@ -8,17 +8,19 @@
 # @Tips: 1. To using this script, please closing nanokdp/nanocom terminal first.
 #       2. Please using kanzi-cable
 #       3. Only one unit could be plugged in station
-# @Usage: $ ./run_iboot_cmd.sh $probeName (such as:30F014)
+# @Usage: $ run_iboot_cmd.sh $probeName (such as:30F014)
 # @Copyright: FX-CoreOS
 #******************************************************************************
 #echo "|----------------------------------------------------------------------|"
 
 echo -e "\033[46;34m#======================================================================#\033[0m"
 echo -e "\033[46;34m| ------------------------- PanicTools V1.0 -------------------------- |\033[0m"
-echo -e "\033[46;34m| ScriptName: ./run_sysdiagnose_cmd                                    |\033[0m"
+echo -e "\033[46;34m| ScriptName: run_sysdiagnose_cmd                                    |\033[0m"
 echo -e "\033[46;34m| UsageTips: Please using only one Kanzi-cable plugged in station.     |\033[0m"
 echo -e "\033[46;34m#======================================================================#\033[0m"
 
+FOLDER="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+echo FOLDER=$FOLDER
 mkdir -p /tmp/panictools &> /dev/null
 tcprelay_log_path="/tmp/panictools/tcprelay.log"
 log_path="/tmp/panictools/run_sysdiagnose_cmd.log"
@@ -129,7 +131,7 @@ showResult 1 0
 showStart 2 "Remoting and running sysdiagnose..."
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Stage 2
 exp_cmd="""
-spawn ./telnet localhost 10023
+spawn $FOLDER/telnet localhost 10023
 set timeout 240
 expect -re \"Escape character\" { sleep 1; send \"\n\" }
 expect -re \"login:\" { send \"\nroot\n\" }
